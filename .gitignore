@@ -1,0 +1,11 @@
+.cpm-cache/
+thirdparty/
+cmake-build-*/
+build/
+results/*
+!results/.gitkeep
+*.user
+.idea/
+.vscode/
+__pycache__/
+.pytest_cache/
