@@ -1,0 +1,37 @@
+{
+  "dataset": "USGS 3DEP 1/3 arc-second DEM",
+  "source_catalog": "https://data.usgs.gov/datacatalog/data/USGS:3a81321b-c153-416f-98b7-cc8e5f0e17c3",
+  "source_url": "https://data.usgs.gov/datacatalog/data/USGS:3a81321b-c153-416f-98b7-cc8e5f0e17c3",
+  "source_file": "USGS_13_n47w123_20250813.tif",
+  "source_sha256": "ab4fb0a2afa65c49c41cb0c59c5ea102329b6e1e47425159b884d05f540c4bb5",
+  "source_size_bytes": 484854229,
+  "source_crs": "EPSG:4269",
+  "source_dimensions": [
+    10812,
+    10812
+  ],
+  "source_resolution": [
+    9.259259269220167e-05,
+    9.259259269220167e-05
+  ],
+  "source_nodata": -999999.0,
+  "crop_center_lat_lon": [
+    46.1914,
+    -122.1956
+  ],
+  "working_crs": "EPSG:26910",
+  "working_dimensions": [
+    1921,
+    1921
+  ],
+  "working_sample_spacing_m": 10.0,
+  "working_center_to_center_span_m": 19200.0,
+  "working_extent_description": "19.2 km square centered on Mount St. Helens summit",
+  "resampling": "bilinear reprojection to regular NAD83 / UTM zone 10N grid; no hole filling or extrapolation",
+  "valid_samples": 3690241,
+  "elevation_min_m": 446.4750061035156,
+  "elevation_max_m": 2534.342529296875,
+  "output_height_raw": "mount_st_helens_usgs_10m_1921_f32.raw",
+  "output_height_raw_sha256": "f99242f2fc0fdc9977b4ba308b5d0f7164c47dbce2b9d4ebabac61c4c6c764b1",
+  "output_format": "little-endian IEEE-754 float32, row-major, north-to-south rows"
+}

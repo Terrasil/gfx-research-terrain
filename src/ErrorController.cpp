@@ -59,8 +59,10 @@ double ErrorController::projected_error_px(
         focal_pixels / nearest_distance;
     const double feature = std::clamp(error.max_feature_strength, 0.0, 1.0);
     const double weight = std::max(0.0, static_cast<double>(context.feature_weight));
+    const double normal_scale = std::clamp(geometric_px / std::max(geometric_px + 1.0, 1.0), 0.0, 1.0);
 
-    return geometric_px + weight * (0.25 * feature * geometric_px + 0.05 * normal_proxy_px);
+    return geometric_px + weight *
+        (0.25 * feature * geometric_px + 0.05 * normal_proxy_px * normal_scale);
 }
 
 int ErrorController::select_distance_lod(

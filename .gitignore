@@ -1,11 +1,62 @@
-.cpm-cache/
-thirdparty/
-cmake-build-*/
-build/
-results/*
-!results/.gitkeep
-*.user
+# IDE and editor files
 .idea/
 .vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# CMake and build output
+cmake-build-*/
+build/
+out/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+Makefile
+build.ninja
+.ninja_deps
+.ninja_log
+compile_commands.json
+_deps/
+.cpm-cache/
+thirdparty/
+
+# Generated binaries and debug files
+*.exe
+*.dll
+*.pdb
+*.obj
+*.o
+*.a
+*.lib
+*.dmp
+
+# Python environments and caches
+.dem-venv/
+.venv/
+venv/
 __pycache__/
+*.py[cod]
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Benchmark, validation and local source data
+results/
+source-data/
+last_crash.txt
+
+# Temporary files
+*.log
+*.tmp
+*.bak
+*.orig
+*~
+
+# Operating system files
+.DS_Store
+Thumbs.db
+desktop.ini

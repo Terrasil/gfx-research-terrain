@@ -67,11 +67,12 @@ bool PatchSet::build(const ExperimentConfig& config, const Heightfield& heightfi
             };
             patch.bounding_radius = glm::length(half_extent);
 
+            const int reference_cells = cells_for_lod(config.max_cells_per_patch, config.lod_count - 1);
             for (int lod = 0; lod < config.lod_count; ++lod) {
                 const int cells = cells_for_lod(config.max_cells_per_patch, lod);
                 patch.meshes[static_cast<std::size_t>(lod)] = build_patch_mesh(patch, cells, heightfield);
                 patch.errors[static_cast<std::size_t>(lod)] = measure_lod_error(
-                    patch, cells, config.error_samples_per_side, heightfield);
+                    patch, cells, reference_cells, config.error_samples_per_side, heightfield);
             }
             patch.previous_lod = config.lod_count - 1;
             patches_.push_back(std::move(patch));
@@ -138,6 +139,7 @@ gfx::research::Mesh PatchSet::build_patch_mesh(
 LodError PatchSet::measure_lod_error(
     const SurfacePatch& patch,
     int cells,
+    int reference_cells,
     int samples_per_side,
     const Heightfield& heightfield) const {
 
@@ -159,23 +161,29 @@ LodError PatchSet::measure_lod_error(
             const float tx = static_cast<float>(sx) / static_cast<float>(samples_per_side - 1);
             const float x = patch.min_x + (patch.max_x - patch.min_x) * tx;
 
-            const float truth = heightfield.height(x, z);
+            const float truth = approximate_height(patch, reference_cells, x, z, heightfield);
             const float approx = approximate_height(patch, cells, x, z, heightfield);
             const double e = std::abs(static_cast<double>(truth - approx));
             max_error = std::max(max_error, e);
             sum_sq += e * e;
 
-            const glm::vec3 n_truth = heightfield.normal(x, z);
             const float x0 = std::max(patch.min_x, x - derivative_step);
             const float x1 = std::min(patch.max_x, x + derivative_step);
             const float z0 = std::max(patch.min_z, z - derivative_step);
             const float z1 = std::min(patch.max_z, z + derivative_step);
+            const float truth_dx = (approximate_height(patch, reference_cells, x1, z, heightfield) -
+                                    approximate_height(patch, reference_cells, x0, z, heightfield)) /
+                std::max(x1 - x0, 1.0e-6f);
+            const float truth_dz = (approximate_height(patch, reference_cells, x, z1, heightfield) -
+                                    approximate_height(patch, reference_cells, x, z0, heightfield)) /
+                std::max(z1 - z0, 1.0e-6f);
             const float dx = (approximate_height(patch, cells, x1, z, heightfield) -
                               approximate_height(patch, cells, x0, z, heightfield)) /
                 std::max(x1 - x0, 1.0e-6f);
             const float dz = (approximate_height(patch, cells, x, z1, heightfield) -
                               approximate_height(patch, cells, x, z0, heightfield)) /
                 std::max(z1 - z0, 1.0e-6f);
+            const glm::vec3 n_truth = glm::normalize(glm::vec3{-truth_dx, 1.0f, -truth_dz});
             const glm::vec3 n_approx = glm::normalize(glm::vec3{-dx, 1.0f, -dz});
             const float dot_value = std::clamp(glm::dot(n_truth, n_approx), -1.0f, 1.0f);
             const double angle = std::acos(static_cast<double>(dot_value)) * 180.0 / std::numbers::pi;

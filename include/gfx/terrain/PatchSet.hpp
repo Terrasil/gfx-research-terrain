@@ -13,7 +13,7 @@
 
 namespace gfx::terrain {
 
-inline constexpr int max_lod_count = 6;
+inline constexpr int max_lod_count = 10;
 
 struct LodError {
     double max_height_error = 0.0;
@@ -60,6 +60,7 @@ private:
     LodError measure_lod_error(
         const SurfacePatch& patch,
         int cells,
+        int reference_cells,
         int samples_per_side,
         const Heightfield& heightfield) const;
 

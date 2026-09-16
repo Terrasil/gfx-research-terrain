@@ -1,49 +1,47 @@
 # gfx-research-terrain
 
-Minimal OpenGL 4.6 research harness for **error-controlled multiresolution terrain representation**. It is the first executable experiment for the doctoral direction *Adaptive Error-Bounded Data Representations for Real-Time Rendering*.
+Experimental C++ and OpenGL 4.6 platform used to evaluate adaptive heightfield tessellation with explicit error control for real-time rendering.
 
-The project deliberately tests one narrow question before adding displacement, normal-map or material-domain migration:
+The repository contains the implementation used for the dissertation experiments, automated validation, benchmark scripts, figure generation tools, PBR terrain materials and the prepared Mount St. Helens DEM used for supplementary validation.
 
-> Can an explicit screen-space error estimator select terrain resolution more consistently than a conventional distance-only LOD heuristic, and can feature-aware terms improve ridge/cliff preservation at comparable cost?
+## Scope
 
-The executable imports `Terrasil/gfx-research-base`; experiment-specific selection, terrain generation, benchmarks and analysis stay in this repository.
+The main evaluated methods are:
 
-## Methods
+- `tessellation-distance`: distance-based LOD reference method
+- `tessellation-variance-baseline`: RMS reconstruction residual reference method
+- `tessellation-error`: maximum projected reconstruction residual
+- `tessellation-normal-bound`: projected residual with an independent normal-angle constraint
+- `tessellation-context-aware`: projected residual with local shading-response sensitivity
 
-- `reference` — finest available mesh in every patch;
-- `distance-lod` — conventional distance heuristic with a swept LOD bias;
-- `error-bounded` — coarsest LOD whose projected geometric residual is below the requested pixel budget;
-- `error-bounded-feature` — the same controller with preregistered curvature/normal-sensitive terms.
+The experimentally validated scope is regular heightfields rendered with GPU tessellation. The project does not treat GPU tessellation, screen-space error or error-bounded LOD themselves as new techniques.
 
-`reference` is a finite mesh, not the analytic ground truth. `lod_error.csv` records the residual of every patch/LOD, including the finest level, against the analytic heightfield.
+## Requirements
 
-## Controlled surfaces
+- CMake 3.25 or newer
+- Ninja
+- C++20 compiler
+- OpenGL 4.6 capable GPU and driver
+- Python 3 for analysis and validation scripts
 
-Four deterministic analytic heightfields are provided:
-
-1. smooth hills;
-2. sharp ridge;
-3. mixed spatial frequencies;
-4. steep cliff band.
-
-Analytic source data lets the project measure each discrete representation independently from the rendered image.
-
-## Crack control
-
-Different patch LODs create T-junctions if rendered naively. The vertex shader therefore snaps the finer patch boundary to the coarser neighbour's piecewise-linear edge. Interior resolution remains unchanged. This prevents ordinary seam cracks from dominating the quality comparison.
+The build obtains `gfx-research-base` automatically through CPM unless a local checkout is supplied.
 
 ## Build
 
-Recommended local-base build on Windows/MinGW:
-
 ```powershell
 cmake -S . -B cmake-build-release -G Ninja `
-  -DCMAKE_BUILD_TYPE=Release `
-  -DGFX_RESEARCH_BASE_LOCAL_PATH=../gfx-research-base
+    -DCMAKE_BUILD_TYPE=Release
+
 cmake --build cmake-build-release --target gfx-research-terrain -j 30
 ```
 
-Without `GFX_RESEARCH_BASE_LOCAL_PATH`, the project fetches `Terrasil/gfx-research-base` through CPM.
+A local base checkout can be used with:
+
+```powershell
+cmake -S . -B cmake-build-release -G Ninja `
+    -DCMAKE_BUILD_TYPE=Release `
+    -DGFX_RESEARCH_BASE_LOCAL_PATH=E:/gfx-research-base
+```
 
 ## Interactive run
 
@@ -51,73 +49,102 @@ Without `GFX_RESEARCH_BASE_LOCAL_PATH`, the project fetches `Terrasil/gfx-resear
 .\cmake-build-release\gfx-research-terrain.exe
 ```
 
-The GUI exposes method, scene, pixel-error budget, feature weight, hysteresis, distance-LOD bias, camera position, wireframe and LOD visualization.
+The GUI exposes scientific and realistic PBR views, scene selection, error budgets, normal and radiometric constraints, tessellation settings, camera controls and automated research suites.
 
-## Quick research validation
+## Validation
 
-```powershell
-.\cmake-build-release\gfx-research-terrain.exe `
-  --publication-quick `
-  --benchmark-output=results/quick
-
-python tools/analyze_results.py results/quick
-```
-
-This intentionally small sweep checks the pipeline after code or shader changes.
-
-## Full publication sweep
+Run the complete validation pipeline before collecting research results:
 
 ```powershell
-.\cmake-build-release\gfx-research-terrain.exe `
-  --publication-suite `
-  --benchmark-output=results/publication
-
-python tools/analyze_results.py results/publication
+.\tools\test_all.ps1
 ```
 
-The suite contains:
+Static and contract tests can also be executed directly:
 
-- primary quality/cost curves;
-- distance-baseline bias sweep;
-- error-budget sweep;
-- feature-aware ablation;
-- resolution scaling;
-- temporal camera motion with/without hysteresis;
-- forced-finest null/equivalence cases.
+```powershell
+python tools/run_unit_tests.py
+```
 
-## Output
+The validation suite checks, among other properties, null equivalence, topology, error-model behavior, GPU method coverage and benchmark-output consistency.
 
-A run writes:
+## Main research runs
 
-- `manifest.txt` — repository/build/GPU/OpenGL and experiment parameters;
-- `lod_error.csv` — offline geometric/normal/feature error of every LOD;
-- `raw.csv` — per-frame GPU time, triangle count, transitions and selected-LOD histogram;
-- `quality.csv` — HDR image error, foreground error, depth error and exact-equality flags;
-- `summary.csv` — aggregated timing/work statistics;
-- `cases.csv` — one row per benchmark case with timing joined to quality;
-- `pareto.csv` — primary quality/cost Pareto classification;
-- `temporal.csv` — temporal transition summary;
-- `null.csv` — null-test pass/fail summary;
-- selected `captures/*.png`.
+Quick doctoral sweep:
 
-No result is considered evidence until it comes from a frozen Release revision and the manifest is archived with the raw CSV files.
+```powershell
+.\tools\run_doctoral.ps1 -Quick
+```
 
-## Useful CLI overrides
+Full doctoral sweep:
+
+```powershell
+.\tools\run_doctoral.ps1
+```
+
+Real DEM validation:
+
+```powershell
+.\tools\run_real_dem_validation.ps1
+```
+
+Dissertation figure captures:
+
+```powershell
+.\tools\run_thesis_figures.ps1
+.\tools\run_thesis_figures_pbr.ps1
+```
+
+Generated benchmark data are written under `results/` and are intentionally excluded from Git. Raw CSV files should be archived together with the exact Git commit used for a published or dissertation result.
+
+## Mount St. Helens DEM
+
+The supplementary measured-terrain test uses a USGS 3DEP 1/3 arc-second DEM.
+
+Frozen source:
+
+- dataset: USGS 3DEP 1/3 arc-second DEM
+- source tile: `USGS_13_n47w123_20250813.tif`
+- source dimensions: 10812 x 10812 float32
+- source CRS: EPSG:4269
+- source SHA-256: `ab4fb0a2afa65c49c41cb0c59c5ea102329b6e1e47425159b884d05f540c4bb5`
+
+Prepared runtime asset:
+
+- file: `assets/dem/mount_st_helens_usgs_10m_1921_f32.raw`
+- dimensions: 1921 x 1921
+- sample spacing: 10 m
+- working CRS: EPSG:26910
+- physical span: 19.2 km x 19.2 km
+- output SHA-256: `f99242f2fc0fdc9977b4ba308b5d0f7164c47dbce2b9d4ebabac61c4c6c764b1`
+
+The C++ application does not decode GeoTIFF at runtime. It reads the prepared float32 RAW file, verifies the expected size and checks that every sample is finite before upload to OpenGL.
+
+The prepared asset can be regenerated from the original GeoTIFF with:
+
+```powershell
+.\tools\setup_mount_st_helens_dem.ps1 -Source "C:\path\to\USGS_13_n47w123_20250813.tif"
+```
+
+Detailed source and transformation metadata are stored in `assets/dem/mount_st_helens_usgs_10m_1921_metadata.json`.
+
+## PBR materials
+
+The grass, dirt, rock and sand PBR textures under `assets/terrain/` originate from Poly Haven:
+
+`https://polyhaven.com/`
+
+Poly Haven assets are distributed under CC0. These textures are used by the realistic visualization path. Quantitative scientific comparisons use the controlled scientific shading path unless a test explicitly states otherwise.
+
+## Repository layout
 
 ```text
---error-budget=<pixels>
---feature-weight=<value>
---hysteresis=<value>
---distance-bias=<integer>
---patches=<count-per-side>
---max-cells=<cells-per-patch>
---lod-count=<count>
---error-samples=<samples-per-side>
---warmup=<frames>
---samples=<frames>
---save-all-captures
---visualize-lod
---wireframe
+assets/       runtime DEM and terrain materials
+cmake/        CMake helper files
+include/      project headers
+shaders/      OpenGL shader sources
+src/          C++ implementation
+tests/        static and contract tests
+tools/        benchmark, validation, DEM preparation and analysis scripts
 ```
 
-See `PUBLICATION_TESTS.md` for the frozen hypotheses and `THEORY.md` for the exact estimator used by the implementation.
+Local dependency checkouts, virtual environments, IDE files, build directories, raw source GeoTIFF files and generated benchmark results are excluded by `.gitignore`.

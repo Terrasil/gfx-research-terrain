@@ -3,20 +3,44 @@
 layout(location = 0) in vec3 aPosition;
 layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec2 aUv;
+layout(location = 3) in float aAdaptiveLevel;
+layout(location = 4) in float aAdaptiveErrorRatio;
 
 uniform mat4 uMvp;
 uniform int uScene;
 uniform int uCurrentCells;
 uniform vec4 uPatchBounds;   // minX, maxX, minZ, maxZ
 uniform vec4 uNeighborCells; // left, right, bottom, top
+uniform bool uUseHeightMap;
+uniform bool uAdaptiveMesh;
+uniform sampler2D uHeightMap;
+uniform float uWorldSize;
+uniform float uHeightMin;
+uniform float uHeightMax;
+uniform int uRenderMode;
+uniform int uLod;
+uniform float uErrorRatio;
+
+uniform sampler2D uGrassHeight;
+uniform sampler2D uDirtHeight;
+uniform sampler2D uRockHeight;
+uniform sampler2D uSandHeight;
 
 out VS_OUT {
     vec3 worldPosition;
     vec3 normal;
     vec2 uv;
+    float lodLevel;
+    float errorRatio;
+    float validity;
 } vs;
 
 float terrainHeight(vec2 p) {
+    if (uUseHeightMap) {
+        vec2 uv = clamp(p / uWorldSize + vec2(0.5), vec2(0.0), vec2(1.0));
+        return textureLod(uHeightMap, uv, 0.0).r;
+    }
+
     float x = p.x;
     float z = p.y;
     if (uScene == 0) {
@@ -56,33 +80,73 @@ float verticalEdgeHeight(float x, float t, int cells) {
     return mix(terrainHeight(vec2(x, z0)), terrainHeight(vec2(x, z1)), f);
 }
 
+vec3 triWeights(vec3 n) {
+    vec3 w = pow(abs(n), vec3(5.0));
+    return w / max(w.x + w.y + w.z, 1.0e-5);
+}
+
+float triHeight(sampler2D tex, vec3 p, vec3 n, float scale) {
+    vec3 w = triWeights(n);
+    float x = textureLod(tex, p.zy / scale, 0.0).r;
+    float y = textureLod(tex, p.xz / scale, 0.0).r;
+    float z = textureLod(tex, p.xy / scale, 0.0).r;
+    return x * w.x + y * w.y + z * w.z;
+}
+
+vec4 materialWeights(vec3 n, float heightN) {
+    float slope = 1.0 - clamp(n.y, 0.0, 1.0);
+    float sand = (1.0 - smoothstep(0.16, 0.28, heightN)) * (1.0 - smoothstep(0.28, 0.52, slope));
+    float rock = smoothstep(0.22, 0.52, slope);
+    rock += 0.22 * smoothstep(0.58, 0.90, heightN) * smoothstep(0.12, 0.42, slope);
+    float grass = smoothstep(0.10, 0.28, heightN) * (1.0 - smoothstep(0.18, 0.42, slope));
+    float dirt = max(0.10, 1.0 - sand - rock - grass);
+    vec4 weights = max(vec4(grass, dirt, rock, sand), vec4(0.0));
+    return weights / max(dot(weights, vec4(1.0)), 1.0e-5);
+}
+
+float realisticMicroDisplacement(vec3 p, vec3 n) {
+    float heightN = clamp((p.y - uHeightMin) / max(uHeightMax - uHeightMin, 1.0e-4), 0.0, 1.0);
+    vec4 mw = materialWeights(n, heightN);
+    float grass = triHeight(uGrassHeight, p, n, 2.0) - 0.5;
+    float dirt = triHeight(uDirtHeight, p, n, 2.1) - 0.5;
+    float rock = triHeight(uRockHeight, p, n, 1.5) - 0.5;
+    float sand = triHeight(uSandHeight, p, n, 2.0) - 0.5;
+    return grass * mw.x * 0.030 + dirt * mw.y * 0.040 + rock * mw.z * 0.115 + sand * mw.w * 0.025;
+}
+
 void main() {
     vec3 position = aPosition;
     const float edgeEpsilon = 1.0e-6;
 
-    int leftCells = max(1, int(uNeighborCells.x + 0.5));
-    int rightCells = max(1, int(uNeighborCells.y + 0.5));
-    int bottomCells = max(1, int(uNeighborCells.z + 0.5));
-    int topCells = max(1, int(uNeighborCells.w + 0.5));
+    if (!uAdaptiveMesh) {
+        int leftCells = max(1, int(uNeighborCells.x + 0.5));
+        int rightCells = max(1, int(uNeighborCells.y + 0.5));
+        int bottomCells = max(1, int(uNeighborCells.z + 0.5));
+        int topCells = max(1, int(uNeighborCells.w + 0.5));
 
-    // A fine patch snaps only its shared edge to the coarser neighbor's
-    // piecewise-linear boundary. This removes T-junction cracks without
-    // changing the interior LOD selected by the controller.
-    if (aUv.x <= edgeEpsilon && leftCells < uCurrentCells) {
-        position.y = verticalEdgeHeight(uPatchBounds.x, aUv.y, leftCells);
+        if (aUv.x <= edgeEpsilon && leftCells < uCurrentCells) {
+            position.y = verticalEdgeHeight(uPatchBounds.x, aUv.y, leftCells);
+        }
+        if (aUv.x >= 1.0 - edgeEpsilon && rightCells < uCurrentCells) {
+            position.y = verticalEdgeHeight(uPatchBounds.y, aUv.y, rightCells);
+        }
+        if (aUv.y <= edgeEpsilon && bottomCells < uCurrentCells) {
+            position.y = horizontalEdgeHeight(uPatchBounds.z, aUv.x, bottomCells);
+        }
+        if (aUv.y >= 1.0 - edgeEpsilon && topCells < uCurrentCells) {
+            position.y = horizontalEdgeHeight(uPatchBounds.w, aUv.x, topCells);
+        }
     }
-    if (aUv.x >= 1.0 - edgeEpsilon && rightCells < uCurrentCells) {
-        position.y = verticalEdgeHeight(uPatchBounds.y, aUv.y, rightCells);
-    }
-    if (aUv.y <= edgeEpsilon && bottomCells < uCurrentCells) {
-        position.y = horizontalEdgeHeight(uPatchBounds.z, aUv.x, bottomCells);
-    }
-    if (aUv.y >= 1.0 - edgeEpsilon && topCells < uCurrentCells) {
-        position.y = horizontalEdgeHeight(uPatchBounds.w, aUv.x, topCells);
-    }
+
+    // Height textures are intentionally not used for vertex displacement here. Adaptive LOD
+    // boundaries contain T-junction stitch vertices, so nonlinear per-vertex displacement would
+    // re-open cracks even when the base terrain topology is watertight. Relief stays in shading.
 
     vs.worldPosition = position;
     vs.normal = normalize(aNormal);
     vs.uv = aUv;
+    vs.lodLevel = uAdaptiveMesh ? aAdaptiveLevel : float(uLod);
+    vs.errorRatio = uAdaptiveMesh ? aAdaptiveErrorRatio : uErrorRatio;
+    vs.validity = 1.0;
     gl_Position = uMvp * vec4(position, 1.0);
 }

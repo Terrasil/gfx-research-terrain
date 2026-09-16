@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(gfx-research-terrain VERSION 0.1.0 LANGUAGES C CXX)
+project(gfx-research-terrain VERSION 0.5.9 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -51,15 +51,19 @@ endif()
 
 add_executable(gfx-research-terrain
     src/main.cpp
+    src/AdaptiveTerrainMesh.cpp
     src/TerrainResearchApp.cpp
     src/BenchmarkRunner.cpp
     src/ErrorController.cpp
+    src/GpuTessellatedTerrain.cpp
     src/Heightfield.cpp
     src/Metrics.cpp
     src/PatchSet.cpp
+    src/TerrainTextures.cpp
 )
 
 target_include_directories(gfx-research-terrain PRIVATE include)
+
 target_compile_features(gfx-research-terrain PRIVATE cxx_std_20)
 target_link_libraries(gfx-research-terrain PRIVATE gfx::research_base)
 
@@ -80,4 +84,19 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(gfx-research-terrain PRIVATE -Wall -Wextra -Wpedantic)
 elseif(MSVC)
     target_compile_options(gfx-research-terrain PRIVATE /W4)
+endif()
+
+include(CTest)
+if(BUILD_TESTING)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    target_compile_definitions(gfx-research-terrain PRIVATE
+        GFX_TERRAIN_PYTHON_EXECUTABLE="${Python3_EXECUTABLE}"
+    )
+    add_test(
+        NAME terrain-unit-static
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/run_unit_tests.py"
+    )
+    set_tests_properties(terrain-unit-static PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
 endif()
