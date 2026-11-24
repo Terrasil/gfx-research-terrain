@@ -15,6 +15,8 @@ patch out float tcLevel;
 
 uniform sampler2D uHeightMap;
 uniform sampler2D uValidityMap;
+uniform sampler2D uOfflineFeatureMap;
+uniform bool uUseOfflineFeatures;
 uniform bool uUseValidityMask;
 uniform mat4 uMvp;
 uniform vec3 uEye;
@@ -217,6 +219,14 @@ float patchInteriorNormalDeviation(vec2 p0, vec2 p1, vec2 p2, vec2 p3) {
     return maximumAngle;
 }
 
+float precomputedEdgeFeature(vec2 a, vec2 b) {
+    // Shared patch edges sample the same world coordinates and retain continuity.
+    vec2 midpoint=0.5*(a+b);
+    return max(textureLod(uOfflineFeatureMap,terrainUv(a),0.0).r,
+           max(textureLod(uOfflineFeatureMap,terrainUv(midpoint),0.0).r,
+               textureLod(uOfflineFeatureMap,terrainUv(b),0.0).r));
+}
+
 float edgeFeatureStrength(vec2 a, vec2 b) {
     return clamp(edgeNormalDeviation(a, b) / radians(45.0), 0.0, 2.0);
 }
@@ -312,7 +322,8 @@ float factorFromFirstOrderRatio(float ratio) {
 float controlledEdgeRatio(vec2 a, vec2 b) {
     float g = geometricRatio(a, b);
     if (uTessMethod == 1) return g;
-    if (uTessMethod == 2) return g * (1.0 + uFeatureWeight * edgeFeatureStrength(a, b));
+    if (uTessMethod == 2) return g * (1.0 + uFeatureWeight *
+        (uUseOfflineFeatures ? precomputedEdgeFeature(a,b) : edgeFeatureStrength(a,b)));
     if (uTessMethod == 3) return varianceRatio(a, b);
     if (uTessMethod == 4) return max(g, normalBoundRatio(a, b));
     if (uTessMethod == 5) {
@@ -325,7 +336,8 @@ float controlledEdgeFactor(vec2 a, vec2 b) {
     float g = geometricRatio(a, b);
     if (uTessMethod == 1) return factorFromGeometricRatio(g);
     if (uTessMethod == 2) {
-        float legacy = g * (1.0 + uFeatureWeight * edgeFeatureStrength(a, b));
+        float legacy = g * (1.0 + uFeatureWeight *
+            (uUseOfflineFeatures ? precomputedEdgeFeature(a,b) : edgeFeatureStrength(a,b)));
         return factorFromGeometricRatio(legacy);
     }
     if (uTessMethod == 3) return factorFromGeometricRatio(varianceRatio(a, b));

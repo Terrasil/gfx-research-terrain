@@ -31,7 +31,8 @@ enum class GuiTestSuite {
     DoctoralQuick,
     DoctoralFull,
     PbrFigures,
-    RealDemValidation
+    RealDemValidation,
+    OfflineFeature
 };
 
 enum class GuiTestStatus {
@@ -65,7 +66,7 @@ private:
     void update_camera_controls(const gfx::research::FrameInfo& frame);
     void apply_camera_preset(int preset_index);
     void reset_camera_to_scene();
-    void start_gui_test_suite(GuiTestSuite suite, const gfx::research::FrameInfo& frame);
+    void start_gui_test_suite(GuiTestSuite suite, const gfx::research::FrameInfo& frame, bool smoke = false);
     void finish_gui_test_suite(const gfx::research::FrameInfo& frame, bool cancelled = false);
     void restore_interactive_state();
     [[nodiscard]] int run_python_tool(const std::filesystem::path& script, const std::filesystem::path* argument) const;
@@ -112,6 +113,7 @@ private:
     GpuTessellatedTerrain tessellated_terrain_;
     unsigned int heightfield_texture_ = 0;
     unsigned int heightfield_validity_texture_ = 0;
+    unsigned int offline_feature_texture_ = 0; // precomputed DEM feature map
 
     ResearchMethod method_ = ResearchMethod::TessellationContextAware;
     SurfaceScene scene_ = SurfaceScene::GlacialValley;

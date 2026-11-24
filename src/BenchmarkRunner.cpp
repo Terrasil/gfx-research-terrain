@@ -7,6 +7,7 @@
 #include <ctime>
 #include <iomanip>
 #include <numbers>
+#include <stdexcept>
 #include <utility>
 
 #ifndef GFX_TERRAIN_GIT_COMMIT
@@ -131,6 +132,7 @@ const char* benchmark_study_name(BenchmarkStudy study) {
     case BenchmarkStudy::ShadingNormalStudy: return "shading-normal-study";
     case BenchmarkStudy::PbrFigure: return "pbr-figure";
     case BenchmarkStudy::RealDemValidation: return "real-dem-validation";
+    case BenchmarkStudy::OfflineFeature: return "offline-feature-study";
     }
     return "unknown";
 }
@@ -146,6 +148,9 @@ void BenchmarkRunner::configure(const ExperimentConfig& config) {
     } else if (config.thesis_figure_suite) {
         warmup_frames_ = std::min(config.warmup_frames, 8);
         sample_frames_ = std::min(config.sample_frames, 24);
+    } else if (config.offline_feature_smoke) {
+        warmup_frames_=2;
+        sample_frames_=4;
     } else {
         warmup_frames_ = config.warmup_frames;
         sample_frames_ = config.sample_frames;
@@ -155,6 +160,9 @@ void BenchmarkRunner::configure(const ExperimentConfig& config) {
 
 void BenchmarkRunner::begin(const RuntimeInfo& runtime_info) {
     if (cases_.empty()) return;
+    if (config_.offline_feature_study && std::filesystem::exists(config_.output_dir)
+        && (std::filesystem::exists(config_.output_dir/"raw.csv") || std::filesystem::exists(config_.output_dir/"manifest.txt")))
+        throw std::runtime_error("Choose a new directory for the DEM feature study");
     std::filesystem::create_directories(config_.output_dir);
     case_index_ = 0;
     frame_in_case_ = 0;
@@ -227,7 +235,7 @@ void BenchmarkRunner::record_frame(double gpu_ms, const RenderStats& stats, floa
     for (int lod = 0; lod < max_lod_count; ++lod) {
         raw_csv_ << ',' << stats.lod_histogram[static_cast<std::size_t>(lod)];
     }
-    raw_csv_ << '\n';
+    raw_csv_ << ',' << (c.offline_feature_ablation?1:0) << '\n';
 }
 
 void BenchmarkRunner::record_quality(
@@ -280,7 +288,8 @@ void BenchmarkRunner::record_quality(
         << silhouette.boundary_p95_distance_px << ','
         << silhouette.boundary_max_distance_px << ','
         << (equality.rgba_exact ? 1 : 0) << ','
-        << (equality.depth_exact ? 1 : 0) << '\n';
+        << (equality.depth_exact ? 1 : 0) << ','
+        << (c.offline_feature_ablation ? 1 : 0) << '\n';
 }
 
 bool BenchmarkRunner::advance() {
@@ -302,6 +311,11 @@ void BenchmarkRunner::finalize() {
     finished_ = true;
     if (raw_csv_.is_open()) raw_csv_.close();
     if (quality_csv_.is_open()) quality_csv_.close();
+    if (config_.offline_feature_study) {
+        std::ofstream status(config_.output_dir/"manifest.txt",std::ios::app);
+        status << "completed=1\n";
+        if (!status) throw std::runtime_error("Could not save completed DEM feature status");
+    }
 }
 
 void BenchmarkRunner::build_cases(const ExperimentConfig&) {
@@ -311,6 +325,7 @@ void BenchmarkRunner::build_cases(const ExperimentConfig&) {
     else if (config_.thesis_figure_suite) build_thesis_figure_cases();
     else if (config_.thesis_pbr_figure_suite) build_pbr_figure_cases();
     else if (config_.real_dem_validation_suite) build_real_dem_validation_cases();
+    else if (config_.offline_feature_study) build_offline_feature_cases();
     else build_full_cases();
 }
 
@@ -1386,6 +1401,51 @@ void BenchmarkRunner::build_real_dem_validation_cases() {
     }
 }
 
+// Independent small paired ablation. Do not insert these cases into the
+// established doctoral 688-case matrix or the external DEM validation.
+void BenchmarkRunner::build_offline_feature_cases() {
+    constexpr std::array methods{
+        ResearchMethod::TessellationErrorFeatureAware, ResearchMethod::TessellationErrorFeatureAware,
+        ResearchMethod::TessellationError, ResearchMethod::TessellationDistance};
+    const bool smoke=config_.offline_feature_smoke;
+    const auto append = [&](float yaw,float distance,float budget,bool temporal) {
+        const auto order=cases_.size()/methods.size()%methods.size();
+        for (std::size_t i=0;i<methods.size();++i) {
+            const auto arm=(order+i)%methods.size();
+            BenchmarkCase c;
+            c.study=BenchmarkStudy::OfflineFeature;
+            c.scene=SurfaceScene::MountStHelensDem;
+            c.method=methods[arm];
+            c.offline_feature_ablation = arm==1;
+            apply_overview_camera(c,c.scene);
+            c.camera_yaw=yaw;
+            c.camera_distance=distance;
+            c.error_budget_px=budget;
+            c.distance_lod_bias=arm==3 ? (budget==0.5f ? -1 : budget==2.f ? 1 : 0) : 0;
+            c.width=smoke?320:1280;
+            c.height=smoke?180:720;
+            c.shading_normal_mode=ShadingNormalMode::Geometric;
+            c.capture_images=budget==1.f && !temporal;
+            if (temporal) {
+                c.mode=BenchmarkMode::Temporal;
+                c.camera_motion_amplitude=2.0f;
+                c.camera_motion_cycles=2.0f;
+            }
+            cases_.push_back(c);
+        }
+    };
+    if (smoke) {
+        append(2.34f,17.3f,1.0f,false);
+        append(2.34f,17.3f,1.0f,true);
+        return;
+    }
+    for (float yaw : {2.34f,-0.72f}) {
+        for (float distance : {13.f,18.f}) for (float budget : {0.5f,1.f,2.f})
+            append(yaw,distance,budget,false);
+        for (float budget : {0.5f,1.f,2.f}) append(yaw,17.3f,budget,true);
+    }
+}
+
 void BenchmarkRunner::write_manifest(const RuntimeInfo& runtime_info) const {
     std::ofstream out(config_.output_dir / "manifest.txt");
     const auto now = std::chrono::system_clock::now();
@@ -1395,6 +1455,14 @@ void BenchmarkRunner::write_manifest(const RuntimeInfo& runtime_info) const {
     out << "thesis_capture_revision=v6.11\n";
     out << "validation_suite=" << (config_.validation_suite ? 1 : 0) << '\n';
     out << "real_dem_validation_suite=" << (config_.real_dem_validation_suite ? 1 : 0) << '\n';
+    out << "offline_feature_study=" << (config_.offline_feature_study ? 1 : 0) << '\n';
+    out << "offline_feature_map_file=assets/dem/mount_st_helens_features_v1_f32.raw\n";
+    if (config_.offline_feature_study) {
+        out << "offline_feature_schema=2\noffline_feature_smoke=" << config_.offline_feature_smoke
+            << "\noffline_timing_scope=elapsed terrain draw with synchronized primitive counts per frame\n"
+            << "offline_patch_grid=" << (config_.offline_feature_smoke ? 24 : 120) << '\n'
+            << "offline_max_tess=" << (config_.offline_feature_smoke ? 8.f : config_.tessellation_max_level) << '\n';
+    }
     out << "timestamp_utc=" << std::put_time(std::gmtime(&time), "%Y-%m-%dT%H:%M:%SZ") << '\n';
     out << "git_commit=" << GFX_TERRAIN_GIT_COMMIT << '\n';
     out << "base_revision=" << GFX_RESEARCH_BASE_REVISION << '\n';
@@ -1415,6 +1483,8 @@ void BenchmarkRunner::write_manifest(const RuntimeInfo& runtime_info) const {
     out << "tessellation_patch_grid=" << config_.tessellation_patch_grid << '\n';
     out << "tessellation_max_level=" << config_.tessellation_max_level << '\n';
     out << "world_size=" << config_.world_size << '\n';
+    out << "offline_feature_ablation=" << (config_.offline_feature_ablation ? 1 : 0) << '\n';
+    out << "offline_feature_scope=MountStHelensDem/tessellation-error-feature-aware only\n";
     out << "default_normal_budget_degrees=" << config_.normal_budget_degrees << '\n';
     out << "default_radiance_budget=" << config_.radiance_budget << '\n';
     out << "default_scientific_roughness=" << config_.scientific_roughness << '\n';
@@ -1451,6 +1521,9 @@ void BenchmarkRunner::write_manifest(const RuntimeInfo& runtime_info) const {
 void BenchmarkRunner::ensure_csv_open() {
     raw_csv_.open(config_.output_dir / "raw.csv", std::ios::trunc);
     quality_csv_.open(config_.output_dir / "quality.csv", std::ios::trunc);
+    if (!raw_csv_ || !quality_csv_) throw std::runtime_error("Cannot open terrain benchmark CSV files");
+    raw_csv_ << std::setprecision(10);
+    quality_csv_ << std::setprecision(10);
 
     raw_csv_
         << "case,study,mode,scene,method,render_mode,shading_normal_mode,camera_distance,base_distance,camera_yaw,camera_pitch,"
@@ -1462,7 +1535,7 @@ void BenchmarkRunner::ensure_csv_open() {
            "adaptive_leaf_count,morphed_vertices,saturated_regions,mean_refinement_level,adaptation_cpu_ms,"
            "topology_open_internal_edges,topology_nonmanifold_edges";
     for (int lod = 0; lod < max_lod_count; ++lod) raw_csv_ << ",lod" << lod << "_patches";
-    raw_csv_ << '\n';
+    raw_csv_ << ",offline_feature_map\n";
 
     quality_csv_
         << "case,study,mode,scene,method,render_mode,shading_normal_mode,camera_distance,camera_yaw,camera_pitch,camera_fov_degrees,camera_target_x,"
@@ -1471,7 +1544,7 @@ void BenchmarkRunner::ensure_csv_open() {
            "morph_band,width,height,image_mae,image_rmse,image_relative_rmse,image_foreground_rmse,image_psnr,"
            "image_max_abs,image_p95_abs,depth_mae,depth_rmse,depth_max_abs,depth_p95_abs,"
            "coverage_mismatch_fraction,boundary_mean_distance_px,boundary_p95_distance_px,"
-           "boundary_max_distance_px,rgba_exact,depth_exact\n";
+           "boundary_max_distance_px,rgba_exact,depth_exact,offline_feature_map\n";
 }
 
 }

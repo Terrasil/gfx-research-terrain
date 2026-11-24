@@ -1,150 +1,70 @@
 # gfx-research-terrain
 
-Experimental C++ and OpenGL 4.6 platform used to evaluate adaptive heightfield tessellation with explicit error control for real-time rendering.
+[![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C.svg)](https://en.cppreference.com/w/cpp/20)
+[![OpenGL 4.6](https://img.shields.io/badge/OpenGL-4.6-5586A4.svg)](https://www.opengl.org/)
+[![CMake](https://img.shields.io/badge/CMake-3.25%2B-064F8C.svg)](https://cmake.org/)
 
-The repository contains the implementation used for the dissertation experiments, automated validation, benchmark scripts, figure generation tools, PBR terrain materials and the prepared Mount St. Helens DEM used for supplementary validation.
+An adaptive heightfield tessellation laboratory with projected-error controls and a separate Mount St. Helens feature-map study.
 
-## Scope
+[Method](#method) · [Build](#build) · [Controls](#controls) · [Experiments](#experiments) · [References](#references)
 
-The main evaluated methods are:
+## Method
 
-- `tessellation-distance`: distance-based LOD reference method
-- `tessellation-variance-baseline`: RMS reconstruction residual reference method
-- `tessellation-error`: maximum projected reconstruction residual
-- `tessellation-normal-bound`: projected residual with an independent normal-angle constraint
-- `tessellation-context-aware`: projected residual with local shading-response sensitivity
+Let $\varepsilon_e$ be the maximum sampled height residual along an edge in world units. With focal length $f_y$ in pixels, camera distance $d$ and pixel budget $\tau$, the geometric controller uses $g=f_y\varepsilon_e/(d\tau)$. The feature-aware variant applies a modulation before choosing an edge tessellation factor.
 
-The experimentally validated scope is regular heightfields rendered with GPU tessellation. The project does not treat GPU tessellation, screen-space error or error-bounded LOD themselves as new techniques.
+```math
+\begin{aligned}
+F(x)&=\operatorname{clamp}\left(
+ \frac{\max_{q\in\mathcal N_4(x)}\arccos(\mathbf n_x\cdot\mathbf n_q)}{25^\circ},
+ 0,1\right),\\
+F_e&=\max\{F(a),F((a+b)/2),F(b)\},\\
+q_e&=\operatorname{clamp}\left(1.15\sqrt{g(1+\lambda F_e)},\,1,\,q_{\max}\right).
+\end{aligned}
+```
 
-## Requirements
-
-- CMake 3.25 or newer
-- Ninja
-- C++20 compiler
-- OpenGL 4.6 capable GPU and driver
-- Python 3 for analysis and validation scripts
-
-The build obtains `gfx-research-base` automatically through CPM unless a local checkout is supplied.
+$F$ is computed from the bundled 10 m DEM and stored as R32F. Both patches sharing an edge use the same world-space sample positions. The estimated projected error uses sampled residuals, and the feature texture represents local normal variation. The offline experiment is supplementary to the doctoral projected-residual analysis.
 
 ## Build
 
-```powershell
-cmake -S . -B cmake-build-release -G Ninja `
-    -DCMAKE_BUILD_TYPE=Release
-
-cmake --build cmake-build-release --target gfx-research-terrain -j 30
-```
-
-A local base checkout can be used with:
+Requirements are CMake 3.25+, a C++20 compiler, Ninja, Python 3 with Jinja2, and a desktop OpenGL 4.6 Core driver. The initial CMake configuration downloads the pinned gfx-research-base revision and its dependencies. A local checkout can be supplied with `-DGFX_RESEARCH_BASE_LOCAL_PATH=../gfx-research-base`.
 
 ```powershell
-cmake -S . -B cmake-build-release -G Ninja `
-    -DCMAKE_BUILD_TYPE=Release `
-    -DGFX_RESEARCH_BASE_LOCAL_PATH=E:/gfx-research-base
+python -m pip install jinja2 numpy
+cmake -S . -B out/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build out/build --parallel
+ctest --test-dir out/build --output-on-failure
 ```
 
-## Interactive run
+On Linux, run the same build commands and omit `.exe` when launching an executable.
+
+## Controls
+
+Launch `gfx-research-terrain.exe` for the adaptive terrain viewer. The Method panel exposes the feature-map toggle on Mount St. Helens. The reference is the finest available tessellation.
+
+**Tests** starts the offline feature smoke test, the full offline feature comparison or one of the thesis suites. Each GUI offline-feature run writes to a new folder under `results`.
+
+## Experiments
 
 ```powershell
-.\cmake-build-release\gfx-research-terrain.exe
+.\out\build\gfx-research-terrain.exe --offline-feature-smoke --benchmark-output=results/dem-smoke
+python tools/analyze_offline_features.py results/dem-smoke
+.\out\build\gfx-research-terrain.exe --offline-feature-study --warmup=20 --samples=60 --benchmark-output=results/dem-paper
+python tools/analyze_offline_features.py results/dem-paper
 ```
 
-The GUI exposes scientific and realistic PBR views, scene selection, error budgets, normal and radiometric constraints, tessellation settings, camera controls and automated research suites.
+The smoke profile uses reduced tessellation. The full feature study measures 72 cases across fixed viewpoints and paired dolly trajectories at 1280 × 720. The controls are runtime feature sampling, the projected-residual path, and a distance-based path. Choose `--doctoral-suite` or use `tools/run_doctoral.ps1` for the existing thesis protocol.
 
-## Validation
+| Output | Contents |
+|---|---|
+| `raw.csv` | Synchronized per-frame GPU draw time, primitive count and camera trajectory |
+| `quality.csv` | End-view HDR, depth and silhouette comparisons to the dense reference |
+| `offline_feature_pairs.csv` | Paired timing, triangle-count variation, image loss and silhouette loss |
+| `offline_feature_inputs.json` | Verified hashes of the DEM and the feature texture |
 
-Run the complete validation pipeline before collecting research results:
+The motion metric is normalized frame-to-frame change in triangle count. The paper scope of this ablation is one real DEM with multiple matched trajectories.
 
-```powershell
-.\tools\test_all.ps1
-```
+## References
 
-Static and contract tests can also be executed directly:
-
-```powershell
-python tools/run_unit_tests.py
-```
-
-The validation suite checks, among other properties, null equivalence, topology, error-model behavior, GPU method coverage and benchmark-output consistency.
-
-## Main research runs
-
-Quick doctoral sweep:
-
-```powershell
-.\tools\run_doctoral.ps1 -Quick
-```
-
-Full doctoral sweep:
-
-```powershell
-.\tools\run_doctoral.ps1
-```
-
-Real DEM validation:
-
-```powershell
-.\tools\run_real_dem_validation.ps1
-```
-
-Dissertation figure captures:
-
-```powershell
-.\tools\run_thesis_figures.ps1
-.\tools\run_thesis_figures_pbr.ps1
-```
-
-Generated benchmark data are written under `results/` and are intentionally excluded from Git. Raw CSV files should be archived together with the exact Git commit used for a published or dissertation result.
-
-## Mount St. Helens DEM
-
-The supplementary measured-terrain test uses a USGS 3DEP 1/3 arc-second DEM.
-
-Frozen source:
-
-- dataset: USGS 3DEP 1/3 arc-second DEM
-- source tile: `USGS_13_n47w123_20250813.tif`
-- source dimensions: 10812 x 10812 float32
-- source CRS: EPSG:4269
-- source SHA-256: `ab4fb0a2afa65c49c41cb0c59c5ea102329b6e1e47425159b884d05f540c4bb5`
-
-Prepared runtime asset:
-
-- file: `assets/dem/mount_st_helens_usgs_10m_1921_f32.raw`
-- dimensions: 1921 x 1921
-- sample spacing: 10 m
-- working CRS: EPSG:26910
-- physical span: 19.2 km x 19.2 km
-- output SHA-256: `f99242f2fc0fdc9977b4ba308b5d0f7164c47dbce2b9d4ebabac61c4c6c764b1`
-
-The C++ application does not decode GeoTIFF at runtime. It reads the prepared float32 RAW file, verifies the expected size and checks that every sample is finite before upload to OpenGL.
-
-The prepared asset can be regenerated from the original GeoTIFF with:
-
-```powershell
-.\tools\setup_mount_st_helens_dem.ps1 -Source "C:\path\to\USGS_13_n47w123_20250813.tif"
-```
-
-Detailed source and transformation metadata are stored in `assets/dem/mount_st_helens_usgs_10m_1921_metadata.json`.
-
-## PBR materials
-
-The grass, dirt, rock and sand PBR textures under `assets/terrain/` originate from Poly Haven:
-
-`https://polyhaven.com/`
-
-Poly Haven assets are distributed under CC0. These textures are used by the realistic visualization path. Quantitative scientific comparisons use the controlled scientific shading path unless a test explicitly states otherwise.
-
-## Repository layout
-
-```text
-assets/       runtime DEM and terrain materials
-cmake/        CMake helper files
-include/      project headers
-shaders/      OpenGL shader sources
-src/          C++ implementation
-tests/        static and contract tests
-tools/        benchmark, validation, DEM preparation and analysis scripts
-```
-
-Local dependency checkouts, virtual environments, IDE files, build directories, raw source GeoTIFF files and generated benchmark results are excluded by `.gitignore`.
+1. Peter Lindstrom and Valerio Pascucci. [Terrain Simplification Simplified](https://www.pascucci.org/pdf-papers/IEEE-TVG-2002.pdf). IEEE TVCG, 2002.
+2. Frank Losasso and Hugues Hoppe. [Geometry Clipmaps](https://hhoppe.com/proj/geomclipmap/). SIGGRAPH, 2004.
+3. USGS. [3DEP source data](https://data.usgs.gov/datacatalog/data/USGS:3a81321b-c153-416f-98b7-cc8e5f0e17c3). Prepared input and provenance are under `assets/dem/`.

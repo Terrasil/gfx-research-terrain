@@ -1,0 +1,15 @@
+{
+  "format": "little-endian float32 / GL_R32F row-major",
+  "size": 1921,
+  "feature": "max four-neighbor normal angle / threshold (clamped 0..1)",
+  "threshold_degrees": 25.0,
+  "sample_spacing_m": 10.0,
+  "source_file": "mount_st_helens_usgs_10m_1921_f32.raw",
+  "source_sha256": "f99242f2fc0fdc9977b4ba308b5d0f7164c47dbce2b9d4ebabac61c4c6c764b1",
+  "feature_sha256": "85211102ac137b2454a0cafbfbc451c8818f8c1b873818c7eaf108efc0fdc8ab",
+  "min": 0.0,
+  "max": 1.0,
+  "mean": 0.26047205924987793,
+  "nonzero_fraction": 0.9802609097888186,
+  "usage": "Exploratory proxy only; not a certified error bound"
+}

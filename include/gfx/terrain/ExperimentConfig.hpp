@@ -92,6 +92,9 @@ struct ExperimentConfig {
     bool thesis_pbr_figure_suite = false;
     bool real_dem_validation_suite = false;
     bool save_all_captures = false;
+    bool offline_feature_study = false;
+    bool offline_feature_smoke = false; // separate paired benchmark; not part of historical thesis matrix
+    bool offline_feature_ablation = false; // opt-in; only validated DEM feature texture
 
     int warmup_frames = 60;
     int sample_frames = 180;

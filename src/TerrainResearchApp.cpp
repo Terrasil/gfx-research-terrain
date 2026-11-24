@@ -108,7 +108,12 @@ std::string capture_stem(const BenchmarkCase& test_case) {
             "-rm" + std::string(render_mode_name(test_case.benchmark_render_mode)) +
             "-nm" + std::string(shading_normal_mode_name(test_case.shading_normal_mode));
     }
-    return std::string(benchmark_study_name(test_case.study)) + "-" +
+    return std::string(benchmark_study_name(test_case.study)) +
+        (test_case.study == BenchmarkStudy::OfflineFeature
+            ? (std::string(test_case.offline_feature_ablation ? "-offline-on" : "-offline-off")
+                + "-yaw" + std::to_string(test_case.camera_yaw)
+                + (test_case.mode == BenchmarkMode::Temporal ? "-motion" : "-static"))
+            : "") + "-" +
         scene_name(test_case.scene) + "-" + method_name(test_case.method) +
         "-d" + std::to_string(static_cast<int>(std::lround(test_case.camera_distance * 10.0f))) +
         "-yaw" + std::to_string(static_cast<int>(std::lround(glm::degrees(test_case.camera_yaw)))) +
@@ -142,6 +147,7 @@ TerrainResearchApp::TerrainResearchApp(ExperimentConfig config)
 TerrainResearchApp::~TerrainResearchApp() {
     if (heightfield_texture_ != 0) glDeleteTextures(1, &heightfield_texture_);
     if (heightfield_validity_texture_ != 0) glDeleteTextures(1, &heightfield_validity_texture_);
+    if (offline_feature_texture_ != 0) glDeleteTextures(1, &offline_feature_texture_);
 }
 
 bool TerrainResearchApp::on_init() {
@@ -180,7 +186,11 @@ bool TerrainResearchApp::on_init() {
     rebuild_scene();
     if (experiment_config_.validation_suite
         || experiment_config_.publication_quick
-        || experiment_config_.publication_suite) {
+        || experiment_config_.publication_suite
+        || experiment_config_.real_dem_validation_suite
+        || experiment_config_.thesis_figure_suite
+        || experiment_config_.thesis_pbr_figure_suite
+        || experiment_config_.offline_feature_study) {
         benchmark_.configure(experiment_config_);
     }
     return true;
@@ -190,7 +200,10 @@ void TerrainResearchApp::on_frame(const gfx::research::FrameInfo& frame) {
     ensure_framebuffers(frame.width, frame.height);
     camera_moved_this_frame_ = false;
     if (!benchmark_.active() && !experiment_config_.validation_suite
-        && !experiment_config_.publication_quick && !experiment_config_.publication_suite) {
+        && !experiment_config_.publication_quick && !experiment_config_.publication_suite
+        && !experiment_config_.real_dem_validation_suite
+        && !experiment_config_.thesis_figure_suite && !experiment_config_.thesis_pbr_figure_suite
+        && !experiment_config_.offline_feature_study) {
         const glm::vec3 previous_position = camera_.position();
         const glm::vec3 previous_target = camera_.target();
         const float previous_fov = camera_.fov();
@@ -206,7 +219,9 @@ void TerrainResearchApp::on_frame(const gfx::research::FrameInfo& frame) {
     }
 
     if ((experiment_config_.validation_suite || experiment_config_.publication_quick
-        || experiment_config_.publication_suite) && !benchmark_started_) {
+        || experiment_config_.publication_suite || experiment_config_.real_dem_validation_suite
+        || experiment_config_.thesis_figure_suite || experiment_config_.thesis_pbr_figure_suite
+        || experiment_config_.offline_feature_study) && !benchmark_started_) {
         benchmark_.begin(runtime_info(frame.width, frame.height));
         benchmark_started_ = true;
     }
@@ -233,10 +248,11 @@ void TerrainResearchApp::on_frame(const gfx::research::FrameInfo& frame) {
             test_case.height,
             true,
             test_case.force_finest);
-        if (gpu_timer_.has_result()) last_gpu_ms_ = gpu_timer_.milliseconds();
+        const bool offline_study=test_case.study==BenchmarkStudy::OfflineFeature;
+        if (!offline_study && gpu_timer_.has_result()) last_gpu_ms_ = gpu_timer_.milliseconds();
 
         if (benchmark_.should_capture_quality()) capture_quality(test_case);
-        if (!benchmark_.in_warmup() && gpu_timer_.has_result()) {
+        if (!benchmark_.in_warmup() && (offline_study || gpu_timer_.has_result())) {
             benchmark_.record_frame(last_gpu_ms_, last_render_stats_, benchmark_.current_camera_distance());
         }
 
@@ -279,6 +295,7 @@ void TerrainResearchApp::on_gui(const gfx::research::FrameInfo& frame) {
             else if (gui_test_suite_ == GuiTestSuite::DoctoralQuick) suite_name = "Doctoral quick suite";
             else if (gui_test_suite_ == GuiTestSuite::PbrFigures) suite_name = "PBR screenshot test suite";
             else if (gui_test_suite_ == GuiTestSuite::RealDemValidation) suite_name = "Real DEM validation suite";
+            else if (gui_test_suite_ == GuiTestSuite::OfflineFeature) suite_name = "Offline feature paired study";
             ImGui::TextUnformatted(suite_name);
 
             const std::size_t case_count = benchmark_.case_count();
@@ -305,7 +322,11 @@ void TerrainResearchApp::on_gui(const gfx::research::FrameInfo& frame) {
         return;
     }
 
-    ImGui::Begin("Terrain representation research");
+    const auto* viewport=ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos({viewport->WorkPos.x+12,viewport->WorkPos.y+12},ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize({448,std::min(800.0f,std::max(320.0f,viewport->WorkSize.y-24))},ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints({380,320},{650,std::max(320.0f,viewport->WorkSize.y-24)});
+    if (!ImGui::Begin("Terrain Research")) { ImGui::End(); return; }
     ImGui::Text("CPU %.3f ms | %.1f FPS", cpu_frame_milliseconds(), fps());
     ImGui::Text("GPU terrain %.3f ms", last_gpu_ms_);
     ImGui::Text("Triangles %zu | transitions %d", last_render_stats_.triangles, last_render_stats_.lod_transitions);
@@ -330,44 +351,8 @@ void TerrainResearchApp::on_gui(const gfx::research::FrameInfo& frame) {
         ImGui::TextColored(ImVec4(1.0f, 0.34f, 0.18f, 1.0f),
             "Budget saturated in %zu finest regions", last_render_stats_.saturated_regions);
     }
-    ImGui::Separator();
-    ImGui::TextUnformatted("Automated research tests");
-    if (ImGui::Button("Run validation tests")) {
-        start_gui_test_suite(GuiTestSuite::Validation, frame);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Run doctoral quick")) {
-        start_gui_test_suite(GuiTestSuite::DoctoralQuick, frame);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Run doctoral full")) {
-        start_gui_test_suite(GuiTestSuite::DoctoralFull, frame);
-    }
-    if (ImGui::Button("Run PBR screenshot tests")) {
-        start_gui_test_suite(GuiTestSuite::PbrFigures, frame);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Run real DEM tests")) {
-        start_gui_test_suite(GuiTestSuite::RealDemValidation, frame);
-    }
-
-    if (gui_test_status_ == GuiTestStatus::Passed) {
-        ImGui::TextColored(ImVec4(0.30f, 0.90f, 0.35f, 1.0f), "PASSED: %s", gui_test_message_.c_str());
-    } else if (gui_test_status_ == GuiTestStatus::Failed) {
-        ImGui::TextColored(ImVec4(1.0f, 0.30f, 0.20f, 1.0f), "FAILED: %s", gui_test_message_.c_str());
-    } else if (gui_test_status_ == GuiTestStatus::Cancelled) {
-        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.20f, 1.0f), "CANCELLED: %s", gui_test_message_.c_str());
-    } else {
-        ImGui::TextDisabled("%s", gui_test_message_.c_str());
-    }
-    if (!gui_test_output_dir_.empty()) {
-        ImGui::TextWrapped("Results: %s", gui_test_output_dir_.string().c_str());
-    }
-    if (!gui_validation_passed_) {
-        ImGui::TextDisabled("Validation has not been run in this session; benchmark buttons remain available.");
-    }
-    ImGui::Separator();
-
+    if (ImGui::BeginTabBar("Sections")) {
+    if (ImGui::BeginTabItem("Method")) {
     const char* methods[] = {
         "Reference (dense)",
         "Patch distance LOD",
@@ -389,41 +374,13 @@ void TerrainResearchApp::on_gui(const gfx::research::FrameInfo& frame) {
         patch_set_.reset_history(experiment_config_.lod_count - 1);
         adaptive_mesh_.reset_history();
     }
-
-    const char* scenes[] = {
-        "Smooth hills [control]", "Sharp ridge [control]", "Mixed frequency [control]", "Cliff band [control]",
-        "Eroded mountain", "Plateau canyon", "Alpine escarpment", "Glacial valley", "River basin",
-        "Badlands", "Fractured highlands", "Mount St. Helens full mountain [USGS 3DEP 10 m]"
-    };
-    ImGui::TextDisabled("DEM source: validated canonical 10 m RAW");
-
-    int scene_index = static_cast<int>(scene_);
-    if (ImGui::Combo("Scene", &scene_index, scenes, surface_scene_count)) {
-        const SurfaceScene previous_scene = scene_;
-        const ResearchMethod previous_method = method_;
-        scene_ = static_cast<SurfaceScene>(scene_index);
-        if (scene_ == SurfaceScene::MountStHelensDem && !is_tessellation_method(method_)) {
-            method_ = ResearchMethod::TessellationError;
+    if (scene_ == SurfaceScene::MountStHelensDem) {
+        bool enabled = experiment_config_.offline_feature_ablation;
+        if (ImGui::Checkbox("Offline feature texture (DEM / feature-aware)", &enabled)) {
+            experiment_config_.offline_feature_ablation = enabled;
+            rebuild_scene(); // reload the precomputed texture only on user change
         }
-        if (scene_ == SurfaceScene::MountStHelensDem && method_ == ResearchMethod::TessellationContextAware) {
-            method_ = ResearchMethod::TessellationError;
-        }
-        try {
-            rebuild_scene();
-            scene_load_error_.clear();
-        } catch (const std::exception& e) {
-            scene_load_error_ = e.what();
-            scene_ = previous_scene;
-            method_ = previous_method;
-            try {
-                rebuild_scene();
-            } catch (...) {
-            }
-        }
-    }
-    ImGui::TextWrapped("%s", scene_description(scene_));
-    if (!scene_load_error_.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.20f, 1.0f), "%s", scene_load_error_.c_str());
+        ImGui::TextDisabled("Ablation only: separate runs/outputs for off and on; not an error bound.");
     }
 
     ImGui::SliderFloat(
@@ -475,6 +432,46 @@ void TerrainResearchApp::on_gui(const gfx::research::FrameInfo& frame) {
     ImGui::Checkbox("Wireframe", &experiment_config_.wireframe);
     ImGui::Text("Terrain materials: %s", terrain_textures_.has_external_assets() ? "loaded" : "fallback");
 
+    ImGui::EndTabItem(); }
+    if (ImGui::BeginTabItem("Scene")) {
+    const char* scenes[] = {
+        "Smooth hills [control]", "Sharp ridge [control]", "Mixed frequency [control]", "Cliff band [control]",
+        "Eroded mountain", "Plateau canyon", "Alpine escarpment", "Glacial valley", "River basin",
+        "Badlands", "Fractured highlands", "Mount St. Helens full mountain [USGS 3DEP 10 m]"
+    };
+    ImGui::TextDisabled("DEM source: validated canonical 10 m RAW");
+
+    int scene_index = static_cast<int>(scene_);
+    if (ImGui::Combo("Scene", &scene_index, scenes, surface_scene_count)) {
+        const SurfaceScene previous_scene = scene_;
+        const ResearchMethod previous_method = method_;
+        scene_ = static_cast<SurfaceScene>(scene_index);
+        if (scene_ == SurfaceScene::MountStHelensDem && !is_tessellation_method(method_)) {
+            method_ = ResearchMethod::TessellationError;
+        }
+        if (scene_ == SurfaceScene::MountStHelensDem && method_ == ResearchMethod::TessellationContextAware) {
+            method_ = ResearchMethod::TessellationError;
+        }
+        try {
+            rebuild_scene();
+            scene_load_error_.clear();
+        } catch (const std::exception& e) {
+            scene_load_error_ = e.what();
+            scene_ = previous_scene;
+            method_ = previous_method;
+            try {
+                rebuild_scene();
+            } catch (...) {
+            }
+        }
+    }
+    ImGui::TextWrapped("%s", scene_description(scene_));
+    if (!scene_load_error_.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.20f, 1.0f), "%s", scene_load_error_.c_str());
+    }
+
+    ImGui::EndTabItem(); }
+    if (ImGui::BeginTabItem("Camera")) {
     ImGui::Separator();
     ImGui::TextUnformatted("Camera");
     const char* preset_names[camera_presets.size()]{};
@@ -524,6 +521,52 @@ void TerrainResearchApp::on_gui(const gfx::research::FrameInfo& frame) {
         gfx::research::save_framebuffer_png("results/terrain.png", frame.width, frame.height);
     }
 
+    ImGui::EndTabItem(); }
+    if (ImGui::BeginTabItem("Tests")) {
+    ImGui::Separator();
+    ImGui::TextUnformatted("Automated research tests");
+    if (ImGui::Button("Run validation tests")) {
+        start_gui_test_suite(GuiTestSuite::Validation, frame);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Run doctoral quick")) {
+        start_gui_test_suite(GuiTestSuite::DoctoralQuick, frame);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Run doctoral full")) {
+        start_gui_test_suite(GuiTestSuite::DoctoralFull, frame);
+    }
+    if (ImGui::Button("Run PBR screenshot tests")) {
+        start_gui_test_suite(GuiTestSuite::PbrFigures, frame);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Run real DEM tests")) {
+        start_gui_test_suite(GuiTestSuite::RealDemValidation, frame);
+    }
+    if (ImGui::Button("Run offline feature smoke test")) {
+        start_gui_test_suite(GuiTestSuite::OfflineFeature, frame, true);
+    }
+    if (ImGui::Button("Run offline feature comparison")) {
+        start_gui_test_suite(GuiTestSuite::OfflineFeature, frame);
+    }
+
+    if (gui_test_status_ == GuiTestStatus::Passed) {
+        ImGui::TextColored(ImVec4(0.30f, 0.90f, 0.35f, 1.0f), "PASSED: %s", gui_test_message_.c_str());
+    } else if (gui_test_status_ == GuiTestStatus::Failed) {
+        ImGui::TextColored(ImVec4(1.0f, 0.30f, 0.20f, 1.0f), "FAILED: %s", gui_test_message_.c_str());
+    } else if (gui_test_status_ == GuiTestStatus::Cancelled) {
+        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.20f, 1.0f), "CANCELLED: %s", gui_test_message_.c_str());
+    } else {
+        ImGui::TextDisabled("%s", gui_test_message_.c_str());
+    }
+    if (!gui_test_output_dir_.empty()) {
+        ImGui::TextWrapped("Results: %s", gui_test_output_dir_.string().c_str());
+    }
+    if (!gui_validation_passed_) {
+        ImGui::TextDisabled("Validation has not been run in this session; benchmark buttons remain available.");
+    }
+    ImGui::Separator();
+
     ImGui::Separator();
     const int displayed_levels = is_adaptive_method(method_)
         ? std::min(experiment_config_.adaptive_max_level + 1, max_lod_count)
@@ -531,6 +574,8 @@ void TerrainResearchApp::on_gui(const gfx::research::FrameInfo& frame) {
     for (int lod = 0; lod < displayed_levels; ++lod) {
         ImGui::Text("Level %d regions: %zu", lod, last_render_stats_.lod_histogram[static_cast<std::size_t>(lod)]);
     }
+    ImGui::EndTabItem(); }
+    ImGui::EndTabBar(); }
     ImGui::End();
 }
 
@@ -574,6 +619,7 @@ void TerrainResearchApp::write_dem_runtime_stage(const char* stage, const int pa
 int TerrainResearchApp::active_tessellation_patch_grid() const {
     if (scene_ != SurfaceScene::MountStHelensDem) return experiment_config_.tessellation_patch_grid;
 
+    if (benchmark_.active() && experiment_config_.offline_feature_smoke) return 24;
     // Keep interactive scene switching comfortably below the dense-reference workload.
     // The full 120 x 120 base grid is retained for automated DEM measurements, where
     // 120 patches x tessellation 16 reproduces the 1920 intervals of the source grid.
@@ -789,7 +835,8 @@ int TerrainResearchApp::run_python_tool(
 
 void TerrainResearchApp::start_gui_test_suite(
     const GuiTestSuite suite,
-    const gfx::research::FrameInfo& frame) {
+    const gfx::research::FrameInfo& frame,
+    const bool smoke) {
 
     if (benchmark_.active() || suite == GuiTestSuite::None) return;
 
@@ -810,7 +857,7 @@ void TerrainResearchApp::start_gui_test_suite(
     if (suite == GuiTestSuite::Validation) gui_validation_passed_ = false;
 
     const std::filesystem::path root = GFX_TERRAIN_SOURCE_DIR;
-    if (suite == GuiTestSuite::RealDemValidation) {
+    if (suite == GuiTestSuite::RealDemValidation || suite == GuiTestSuite::OfflineFeature) {
         const std::filesystem::path dem_asset = root
             / "assets" / "dem" / "mount_st_helens_usgs_10m_1921_f32.raw";
         constexpr std::uintmax_t expected_dem_bytes = 1921ull * 1921ull * sizeof(float);
@@ -841,6 +888,8 @@ void TerrainResearchApp::start_gui_test_suite(
     suite_config.thesis_figure_suite = false;
     suite_config.thesis_pbr_figure_suite = suite == GuiTestSuite::PbrFigures;
     suite_config.real_dem_validation_suite = suite == GuiTestSuite::RealDemValidation;
+    suite_config.offline_feature_study = suite == GuiTestSuite::OfflineFeature;
+    suite_config.offline_feature_smoke = suite_config.offline_feature_study && smoke;
     suite_config.render_mode = suite == GuiTestSuite::PbrFigures ? RenderMode::Realistic : RenderMode::Scientific;
     suite_config.shading_normal_mode = suite == GuiTestSuite::PbrFigures
         ? ShadingNormalMode::Smooth
@@ -852,9 +901,14 @@ void TerrainResearchApp::start_gui_test_suite(
     else if (suite == GuiTestSuite::PbrFigures) output_name = "thesis-pbr-gui";
     else if (suite == GuiTestSuite::RealDemValidation) output_name = "real-dem-validation-gui";
     suite_config.output_dir = root / "results" / output_name;
-
-    std::error_code error;
-    std::filesystem::remove_all(suite_config.output_dir, error);
+    if (suite_config.offline_feature_study) {
+        const char* prefix = smoke ? "offline-features-smoke-" : "offline-features-gui-";
+        const auto stamp = std::chrono::system_clock::now().time_since_epoch().count();
+        suite_config.output_dir = root / "results" / (prefix + std::to_string(stamp));
+    } else {
+        std::error_code error;
+        std::filesystem::remove_all(suite_config.output_dir, error);
+    }
     gui_test_output_dir_ = suite_config.output_dir;
     experiment_config_ = suite_config;
     benchmark_.configure(suite_config);
@@ -876,6 +930,9 @@ void TerrainResearchApp::start_gui_test_suite(
         gui_test_message_ = "Rendering full PBR thesis screenshots with smooth normals...";
     } else if (suite == GuiTestSuite::RealDemValidation) {
         gui_test_message_ = "Running external validation on the measured Mount St. Helens DEM...";
+    } else if (suite == GuiTestSuite::OfflineFeature) {
+        gui_test_message_ = smoke ? "Running offline feature smoke test..." :
+            "Running 18 paired feature/no-feature DEM cases...";
     } else {
         gui_test_message_ = "Running full doctoral benchmark...";
     }
@@ -895,11 +952,13 @@ void TerrainResearchApp::finish_gui_test_suite(
         const std::filesystem::path root = GFX_TERRAIN_SOURCE_DIR;
         const bool pbr_suite = completed_suite == GuiTestSuite::PbrFigures;
         const bool real_dem_suite = completed_suite == GuiTestSuite::RealDemValidation;
+        const bool offline_feature_suite = completed_suite == GuiTestSuite::OfflineFeature;
         gui_test_message_ = pbr_suite ? "Finalizing PBR screenshot captures..." : "Analyzing generated results...";
         const int analysis_result = pbr_suite
             ? 0
             : run_python_tool(
-                root / (real_dem_suite ? "tools/analyze_real_dem.py" : "tools/analyze_results.py"),
+                root / (offline_feature_suite ? "tools/analyze_offline_features.py"
+                    : real_dem_suite ? "tools/analyze_real_dem.py" : "tools/analyze_results.py"),
                 &gui_test_output_dir_);
         int validation_result = 0;
         if (completed_suite == GuiTestSuite::Validation && analysis_result == 0) {
@@ -917,6 +976,8 @@ void TerrainResearchApp::finish_gui_test_suite(
                 gui_test_message_ = "PBR screenshot tests completed. Raw captures were generated in the results directory.";
             } else if (completed_suite == GuiTestSuite::RealDemValidation) {
                 gui_test_message_ = "Real DEM validation completed. Summary and raw captures were generated.";
+            } else if (completed_suite == GuiTestSuite::OfflineFeature) {
+                gui_test_message_ = "Offline-feature study finished. Inspect paired comparison before drawing conclusions.";
             } else {
                 gui_test_message_ = "Doctoral full completed and analysis files were generated.";
             }
@@ -974,6 +1035,10 @@ void TerrainResearchApp::upload_heightfield_texture() {
     if (heightfield_validity_texture_ != 0) {
         glDeleteTextures(1, &heightfield_validity_texture_);
         heightfield_validity_texture_ = 0;
+    }
+    if (offline_feature_texture_ != 0) {
+        glDeleteTextures(1, &offline_feature_texture_);
+        offline_feature_texture_ = 0;
     }
 
     write_dem_runtime_stage("creating height texture");
@@ -1037,6 +1102,42 @@ void TerrainResearchApp::upload_heightfield_texture() {
     }
     glTextureParameteri(heightfield_validity_texture_, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTextureParameteri(heightfield_validity_texture_, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    // Offline feature-map ablation. No change to the archived method when off.
+    // The texture is not a geometric error bound; it is an independently scored
+    // local normal-variation proxy generated from the frozen USGS DEM.
+    glCreateTextures(GL_TEXTURE_2D, 1, &offline_feature_texture_);
+    const bool use_offline = experiment_config_.offline_feature_ablation
+        && scene_ == SurfaceScene::MountStHelensDem;
+    if (use_offline) {
+        constexpr int samples_per_side = 1921;
+        const std::filesystem::path path = std::filesystem::path(GFX_TERRAIN_SOURCE_DIR)
+            / "assets/dem/mount_st_helens_features_v1_f32.raw";
+        const auto expected_bytes = std::uintmax_t(samples_per_side) * samples_per_side * sizeof(float);
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(path,ec) || ec
+            || std::filesystem::file_size(path,ec) != expected_bytes || ec)
+            throw std::runtime_error("Offline feature map missing or invalid: " + path.string()
+                + ". Run python tools/precompute_dem_features.py");
+        std::vector<float> data(std::size_t(samples_per_side)*samples_per_side);
+        std::ifstream file(path, std::ios::binary);
+        file.read(reinterpret_cast<char*>(data.data()),static_cast<std::streamsize>(expected_bytes));
+        if (!file || !std::all_of(data.begin(),data.end(),[](float f) {
+            return std::isfinite(f) && f >= 0.0f && f <= 1.0f;
+        })) throw std::runtime_error("Offline feature map has invalid float32 data: " + path.string());
+        glTextureStorage2D(offline_feature_texture_,1,GL_R32F,samples_per_side,samples_per_side);
+        glTextureSubImage2D(offline_feature_texture_,0,0,0,samples_per_side,samples_per_side,
+            GL_RED,GL_FLOAT,data.data());
+    } else {
+        const float zero=0.0f;
+        glTextureStorage2D(offline_feature_texture_,1,GL_R32F,1,1);
+        glTextureSubImage2D(offline_feature_texture_,0,0,0,1,1,GL_RED,GL_FLOAT,&zero);
+    }
+    glTextureParameteri(offline_feature_texture_,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+    glTextureParameteri(offline_feature_texture_,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    glTextureParameteri(offline_feature_texture_,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+    glTextureParameteri(offline_feature_texture_,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+
     glTextureParameteri(heightfield_validity_texture_, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTextureParameteri(heightfield_validity_texture_, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
@@ -1069,6 +1170,8 @@ void TerrainResearchApp::ensure_framebuffers(int width, int height) {
 
 void TerrainResearchApp::apply_benchmark_case(const BenchmarkCase& test_case) {
     const bool scene_changed = scene_ != test_case.scene;
+    const bool feature_changed = experiment_config_.offline_feature_ablation != test_case.offline_feature_ablation;
+    experiment_config_.offline_feature_ablation = test_case.offline_feature_ablation;
     scene_ = test_case.scene;
     method_ = test_case.method;
     experiment_config_.error_budget_px = test_case.error_budget_px;
@@ -1084,7 +1187,7 @@ void TerrainResearchApp::apply_benchmark_case(const BenchmarkCase& test_case) {
     experiment_config_.shading_normal_mode = test_case.shading_normal_mode;
     experiment_config_.wireframe = false;
 
-    if (scene_changed) rebuild_scene();
+    if (scene_changed || feature_changed) rebuild_scene();
     else if (cpu_scene_structures_ready_) {
         patch_set_.reset_history(experiment_config_.lod_count - 1);
         adaptive_mesh_.reset_history();
@@ -1219,10 +1322,14 @@ RenderStats TerrainResearchApp::render_surface(
     active_shader.set_int("uSandHeight", 15);
     active_shader.set_int("uHeightMap", 16);
     active_shader.set_int("uValidityMap", 17);
+    active_shader.set_int("uOfflineFeatureMap",18);
+    active_shader.set_bool("uUseOfflineFeatures", experiment_config_.offline_feature_ablation
+        && scene_ == SurfaceScene::MountStHelensDem && method == ResearchMethod::TessellationErrorFeatureAware);
     active_shader.set_bool("uUseValidityMask", heightfield_.has_validity_mask());
     terrain_textures_.bind();
     glBindTextureUnit(16, heightfield_texture_);
     glBindTextureUnit(17, heightfield_validity_texture_);
+    glBindTextureUnit(18, offline_feature_texture_);
 
     SelectionContext context;
     context.camera_position = camera_.position();
@@ -1245,7 +1352,9 @@ RenderStats TerrainResearchApp::render_surface(
         active_shader.set_float("uNormalBudgetDegrees", experiment_config_.normal_budget_degrees);
         active_shader.set_float("uRadianceBudget", experiment_config_.radiance_budget);
         active_shader.set_int("uDistanceLodBias", experiment_config_.distance_lod_bias);
-        active_shader.set_float("uMaxTessLevel", experiment_config_.tessellation_max_level);
+        const float max_tess_level = benchmark_.active() && experiment_config_.offline_feature_smoke
+            ? 8.0f : experiment_config_.tessellation_max_level;
+        active_shader.set_float("uMaxTessLevel", max_tess_level);
         active_shader.set_bool("uForceMaxTessellation", force_finest || dem_dense_reference);
         int tess_method = 0;
         switch (method) {
@@ -1263,13 +1372,29 @@ RenderStats TerrainResearchApp::render_surface(
             while (glGetError() != GL_NO_ERROR) {}
             write_dem_runtime_stage("before tessellation draw", patch_grid);
         }
-        if (time_gpu) gpu_timer_.begin();
+        const bool paired=benchmark_.active() && benchmark_.current_case().study==BenchmarkStudy::OfflineFeature;
+        const bool measure_paired=time_gpu && paired && !benchmark_.in_warmup();
         const bool dem_scene = scene_ == SurfaceScene::MountStHelensDem;
         const bool synchronize_triangle_count = benchmark_.active() && benchmark_.frame_in_case() == 0;
         const bool measure_primitives = !dem_scene || synchronize_triangle_count;
-        tessellated_terrain_.draw(patch_grid, synchronize_triangle_count, measure_primitives);
+        if (measure_paired) {
+            GLuint elapsed=0;
+            glCreateQueries(GL_TIME_ELAPSED,1,&elapsed);
+            glBeginQuery(GL_TIME_ELAPSED,elapsed);
+            tessellated_terrain_.draw(patch_grid,false,true);
+            glEndQuery(GL_TIME_ELAPSED);
+            GLuint64 ns=0;
+            glGetQueryObjectui64v(elapsed,GL_QUERY_RESULT,&ns);
+            glDeleteQueries(1,&elapsed);
+            if (ns==0) throw std::runtime_error("Invalid DEM feature measurement");
+            tessellated_terrain_.resolve_latest_count();
+            last_gpu_ms_=static_cast<double>(ns)*1e-6;
+        } else {
+            if (time_gpu && !paired) gpu_timer_.begin();
+            tessellated_terrain_.draw(patch_grid, synchronize_triangle_count, measure_primitives);
+            if (time_gpu && !paired) gpu_timer_.end();
+        }
         write_dem_runtime_stage("tessellation draw submitted", patch_grid);
-        if (time_gpu) gpu_timer_.end();
         if (verify_dem_draw) {
             glFinish();
             const unsigned int error = glGetError();

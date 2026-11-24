@@ -29,7 +29,8 @@ enum class BenchmarkStudy {
     ThesisCamera,
     ShadingNormalStudy,
     PbrFigure,
-    RealDemValidation
+    RealDemValidation,
+    OfflineFeature
 };
 
 struct BenchmarkCase {
@@ -61,6 +62,7 @@ struct BenchmarkCase {
 
     int width = 1920;
     int height = 1080;
+    bool offline_feature_ablation = false; // per-case choice; always logged
     bool force_finest = false;
     bool capture_images = false;
     bool capture_diagnostics = false;
@@ -108,6 +110,7 @@ private:
     void build_thesis_figure_cases();
     void build_pbr_figure_cases();
     void build_real_dem_validation_cases();
+    void build_offline_feature_cases();
     void write_manifest(const RuntimeInfo& runtime_info) const;
     void ensure_csv_open();
 

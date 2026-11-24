@@ -15,6 +15,7 @@ public:
 
     void initialize();
     void draw(int patches_per_side, bool synchronize_count = false, bool measure_primitives = true);
+    void resolve_latest_count();
     void reset_measurement();
 
     [[nodiscard]] std::size_t last_triangle_count() const { return last_triangle_count_; }

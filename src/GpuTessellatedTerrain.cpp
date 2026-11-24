@@ -80,6 +80,15 @@ void GpuTessellatedTerrain::draw(
     glBindVertexArray(0);
 }
 
+void GpuTessellatedTerrain::resolve_latest_count() {
+    const std::size_t index=(query_index_+primitive_queries_.size()-1)%primitive_queries_.size();
+    if (!query_pending_[index]) return;
+    unsigned primitives=0;
+    glGetQueryObjectuiv(primitive_queries_[index],GL_QUERY_RESULT,&primitives);
+    last_triangle_count_=primitives;
+    query_pending_[index]=false;
+}
+
 void GpuTessellatedTerrain::reset_measurement() {
     if (primitive_queries_[0] != 0) {
         for (std::size_t i = 0; i < primitive_queries_.size(); ++i) {

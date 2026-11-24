@@ -122,6 +122,15 @@ ExperimentConfig parse_arguments(int argc, char** argv) {
             config.thesis_figure_suite = false;
             config.thesis_pbr_figure_suite = false;
             config.real_dem_validation_suite = true;
+        } else if (arg == "--offline-feature-study" || arg == "--offline-feature-smoke") {
+            config.validation_suite = false;
+            config.publication_quick = false;
+            config.publication_suite = false;
+            config.real_dem_validation_suite = false;
+            config.offline_feature_study = true;
+            config.offline_feature_smoke = arg == "--offline-feature-smoke";
+        } else if (arg == "--offline-feature-ablation") {
+            config.offline_feature_ablation = true;
         } else if (arg == "--save-all-captures") {
             config.save_all_captures = true;
         } else if (arg == "--visualize-lod") {
